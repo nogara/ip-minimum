@@ -1,30 +1,24 @@
 #!/usr/bin/env python3
 
 import ipaddress
+import sys
 
-def collapse_to_max_16(file_path):
+def collapse_from_lines(lines):
     """
-    Reads IPv4 addresses or networks from 'file_path'.
-    For each address in each network:
-      - determine its top 16 bits
-      - group it into that /16
+    Processes IPv4 addresses or networks from a list of lines.
     Returns a deduplicated, sorted list of IPv4Network('/16') objects.
-    
-    Any IPs that share the same first two octets become one /16.
     """
-
     # We'll collect all the "top-16-bit" prefixes (as integer) needed.
-    # Example: 68.183.x.x will produce one integer for (68<<8 | 183).
     top16_groups = set()
 
-    with open(file_path, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
 
-            # If line is a CIDR (contains "/"), parse it as a network.
-            # Else parse as a single host (i.e., /32).
+        # If line is a CIDR (contains "/"), parse it as a network.
+        # Else parse as a single host (i.e., /32).
+        try:
             if '/' in line:
                 net = ipaddress.ip_network(line, strict=False)
             else:
@@ -40,7 +34,7 @@ def collapse_to_max_16(file_path):
             start = int(net.network_address)
             end   = int(net.broadcast_address)
 
-            # Walk from the network's start to end in steps that “jump” to
+            # Walk from the network's start to end in steps that "jump" to
             # the next /16 boundary, to avoid enumerating each IP for large nets.
             cur = start
             while cur <= end:
@@ -57,12 +51,11 @@ def collapse_to_max_16(file_path):
                 # Move cur to the first address *after* this /16 block
                 # so we skip the entire /16 in one jump.
                 cur = this_16_end + 1
-
-                # But if that jump overshoots the end of the net, we’ll only loop once more
-                # because the while loop condition (cur <= end) fails next time.
+        except ValueError:
+            # Skip invalid lines
+            continue
 
     # Now build an actual IPv4Network for each top_16_bits
-    # Example: if top_16_bits = (68<<8 | 183), that’s 68.183.x.x
     collapsed_nets = []
     for top_16 in sorted(top16_groups):
         # Reconstruct the IPv4 address integer that starts the /16
@@ -73,10 +66,36 @@ def collapse_to_max_16(file_path):
 
     return collapsed_nets
 
-if __name__ == "__main__":
-    path = "ips.txt"  # <-- point this to your file
-    nets = collapse_to_max_16(path)
+def collapse_to_max_16(file_path):
+    """
+    Reads IPv4 addresses or networks from 'file_path'.
+    For each address in each network:
+      - determine its top 16 bits
+      - group it into that /16
+    Returns a deduplicated, sorted list of IPv4Network('/16') objects.
+    
+    Any IPs that share the same first two octets become one /16.
+    """
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+    
+    return collapse_from_lines(lines)
 
+if __name__ == "__main__":
+    # Check if input is being piped or if a file path is provided
+    if not sys.stdin.isatty():
+        # Input is being piped
+        lines = sys.stdin.readlines()
+        nets = collapse_from_lines(lines)
+    elif len(sys.argv) == 2:
+        # File path is provided as argument
+        path = sys.argv[1]
+        nets = collapse_to_max_16(path)
+    else:
+        print("Usage: python main.py <path_to_ip_list>")
+        print("   or: cat ip_list.txt | python main.py")
+        sys.exit(1)
+    
     print("Collapsed up to /16 coverage:")
     for n in nets:
         print(n)
